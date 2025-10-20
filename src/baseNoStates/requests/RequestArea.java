@@ -5,59 +5,89 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 
 public class RequestArea implements Request {
     private final String credential;
-    private final String action;           // "lock" o "unlock"
-    private final LocalDateTime now;
+    private final String action;
     private final String areaId;
+    private final LocalDateTime requestDateTime;
+    private final ArrayList<RequestReader> requests = new ArrayList<>();
+    private boolean authorized = true;
 
-    // Resultado agregado
-    private boolean authorized = true;     // true si TODAS autorizadas; útil si luego lo usas
-    private final JSONArray requestsDoors = new JSONArray();
-
-    public RequestArea(String credential, String action, LocalDateTime now, String areaId) {
+    public RequestArea(String credential, String action, LocalDateTime dateTime, String areaId) {
         this.credential = credential;
         this.action = action;
-        this.now = now;
         this.areaId = areaId;
+        this.requestDateTime = dateTime;
     }
 
-    @Override
-    public void process() {
-        // Validación básica de acción de área
-        if (!Actions.LOCK.equals(Actions.canonicalize(action)) &&
-                !Actions.UNLOCK.equals(Actions.canonicalize(action))) {
-            // Ignoramos acciones no válidas en áreas; podrías añadir "reasons"
-            return;
-        }
-
-        Area area = DirectoryAreas.findAreaById(areaId);
-        if (area == null) return;
-
-        for (Door d : area.getDoorsGivingAccess()) {
-            RequestReader rr = new RequestReader(credential, action, now, d.getId());
-            rr.process();
-            JSONObject jr = rr.answerToJson();
-            // Si quieres coherencia estricta: authorized global = AND de todas las puertas
-            if (!jr.optBoolean("authorized", false)) authorized = false;
-            requestsDoors.put(jr);
-        }
+    public String getAction() {
+        return action;
     }
 
-    @Override
     public JSONObject answerToJson() {
-        JSONObject j = new JSONObject();
-        j.put("areaId", areaId);
-        j.put("action", action);
-        j.put("authorized", authorized);
-        j.put("requestsDoors", requestsDoors);
-        return j;
+        JSONObject json = new JSONObject();
+        json.put("authorized", authorized);
+        json.put("action", action);
+        json.put("areaId", areaId);
+
+        JSONArray requestJson = new JSONArray();
+        for (RequestReader rr : requests) {
+            requestJson.put(rr.answerToJson());
+        }
+        json.put("requestsDoors", requestJson);
+        return json;
     }
 
     @Override
     public String toString() {
-        return "Request area\nuser credential " + credential + " action " + action +
-                " datetime " + now + "\nareaId " + areaId + "\nauthorized " + authorized;
+        return "Request{" +
+                "credential=" + credential +
+                ", action=" + action +
+                ", now=" + requestDateTime +
+                ", areaId=" + areaId +
+                ", requests=" + requests +
+                "}";
+    }
+
+    public void process() {
+        User user = DirectoryUserGroups.findUserByCredential(credential);
+        // invalid action: only lock/unlock allowed for area requests
+        String canonical = Actions.canonicalize(action);
+        if (user == null || canonical == null ||
+                !(Actions.LOCK.equals(canonical) || Actions.UNLOCK.equals(canonical))) {
+            authorized = false;
+            return;
+        }
+        if (!user.canSendRequest(requestDateTime)) {
+            authorized = false;
+            return;
+        }
+
+        Area area = DirectoryAreas.findAreaById(areaId);
+        if (area == null) {
+            authorized = false;
+            return;
+        }
+
+        // Gather all doors whose to-space is in this area
+        ArrayList<Door> doorsInArea = new ArrayList<>();
+        for (Space space : area.getSpaces()) {
+            doorsInArea.addAll(space.getDoorsGivingAccess());
+        }
+
+        if (doorsInArea.isEmpty()) {
+            return; // nothing to do; remains authorized
+        }
+
+        for (Door door : doorsInArea) {
+            RequestReader req = new RequestReader(credential, action, requestDateTime, door.getId());
+            req.process();
+            if (!req.isAuthorized()) {
+                authorized = false;
+            }
+            requests.add(req);
+        }
     }
 }

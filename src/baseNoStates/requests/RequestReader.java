@@ -1,13 +1,11 @@
 package baseNoStates.requests;
 
-import baseNoStates.DirectoryDoors;
-import baseNoStates.DirectoryUsers;
-import baseNoStates.Door;
-import baseNoStates.User;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
+import baseNoStates.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 
 public class RequestReader implements Request {
     private final String credential; // who
@@ -24,7 +22,7 @@ public class RequestReader implements Request {
         this.credential = credential;
         this.action = action;
         this.doorId = doorId;
-        reasons = new ArrayList<>();
+        this.reasons = new ArrayList<>();
         this.now = now;
     }
 
@@ -46,21 +44,14 @@ public class RequestReader implements Request {
 
     @Override
     public String toString() {
-        if (userName == null) {
-            userName = "unknown";
-        }
-        return "Request{"
-                + "credential=" + credential
-                + ", userName=" + userName
-                + ", action=" + action
-                + ", now=" + now
-                + ", doorID=" + doorId
-                + ", closed=" + doorClosed
-                + ", authorized=" + authorized
-                + ", reasons=" + reasons
-                + "}";
+        if (userName == null) userName = "unknown";
+        return "Request{credential=" + credential + ", userName=" + userName
+                + ", action=" + action + ", now=" + now + ", doorID=" + doorId
+                + ", closed=" + doorClosed + ", authorized=" + authorized
+                + ", reasons=" + reasons + "}";
     }
 
+    @Override
     public JSONObject answerToJson() {
         JSONObject json = new JSONObject();
         json.put("authorized", authorized);
@@ -72,29 +63,60 @@ public class RequestReader implements Request {
         return json;
     }
 
-    // see if the request is authorized and put this into the request, then send it to the door.
-    // if authorized, perform the action.
     public void process() {
-        User user = DirectoryUsers.findUserByCredential(credential);
+        User user = DirectoryUserGroups.findUserByCredential(credential);
         Door door = DirectoryDoors.findDoorById(doorId);
         assert door != null : "door " + doorId + " not found";
 
-        authorize(user, door);  // sets authorized + reasons
-        door.processRequest(this); // ejecuta acción solo si authorized==true (y pone stateName)
-        doorClosed = door.isClosed(); // estado físico tras el intento
+        authorize(user, door);      // sets authorized + reasons
+        door.processRequest(this);  // executes action if authorized, sets stateName
+        doorClosed = door.isClosed();
     }
 
-    // the result is put into the request object plus, if not authorized, why not,
-    // only for testing
+    // Determine if the user is allowed to do the action in this space and time
     private void authorize(User user, Door door) {
         if (user == null) {
             authorized = false;
             userName = "unknown";
-            addReason("user doesn't exists");
-        } else {
-            // usamos la credencial como nombre temporal (sin tocar User)
-            userName = credential;
-            authorized = true;
+            addReason("User does not exist");
+            return;
         }
+        userName = user.getCredential();
+
+        // --- Door has String ids: resolve to Space objects via DirectoryAreas ---
+        String fromId = door.getFromSpace(); // String
+        String toId   = door.getToSpace();   // String
+
+        Area fromArea = DirectoryAreas.findAreaById(fromId);
+        Area toArea   = DirectoryAreas.findAreaById(toId);
+
+        if (!(fromArea instanceof Space) || !(toArea instanceof Space)) {
+            authorized = false;
+            addReason("Door spaces are not valid");
+            return;
+        }
+
+        Space fromSpace = (Space) fromArea;
+        Space toSpace   = (Space) toArea;
+
+        // Within schedule?
+        if (!user.canSendRequest(now)) {
+            authorized = false;
+            addReason("Not within work schedule");
+            return;
+        }
+        // Allowed in both spaces?
+        if (!user.canBeInSpace(fromSpace) || !user.canBeInSpace(toSpace)) {
+            authorized = false;
+            addReason("User isn't allowed in the space(s)");
+            return;
+        }
+        // Allowed to do the action?
+        if (!user.canDoAction(action, fromSpace, now)) {
+            authorized = false;
+            addReason("User isn't allowed to do the action");
+            return;
+        }
+        authorized = true;
     }
 }

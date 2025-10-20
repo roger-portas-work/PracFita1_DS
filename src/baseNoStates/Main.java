@@ -3,10 +3,10 @@ package baseNoStates;
 public class Main {
     public static void main(String[] args) {
         DirectoryDoors.makeDoors();
-        DirectoryAreas.makeAreas();      // ← construye el árbol y registra puertas en el “to”
-        DirectoryUserGroups.makeUserGroups(); // ← en vez de DirectoryUsers.makeUsers()
+        DirectoryAreas.makeAreas();      // construye el árbol y registra las puertas en el espacio destino
+        DirectoryUserGroups.makeUserGroups(); // crea usuarios y grupos con permisos y horarios
         new WebServer();
-
-        // (Paso 2 – cuando lo hagamos): Clock.getInstance().startClock();
+        // Si implementas el temporizador de unlock_shortly más adelante:
+        // Clock.getInstance().startClock();
     }
 }
